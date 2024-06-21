@@ -1,21 +1,34 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.logging.*;
 
 public class Main {
     private static final int PORT = 12345;
     private static Set<PrintWriter> clientWriters = new HashSet<>();
     private static Map<String, String> botResponses = new HashMap<>();
+    private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
+
+    static {
+        try {
+            FileHandler fileHandler = new FileHandler("chatbot.log", true);
+            fileHandler.setFormatter(new SimpleFormatter());
+            LOGGER.addHandler(fileHandler);
+            LOGGER.setLevel(Level.ALL);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
     public static void main(String[] args) {
+        LOGGER.info("Chatbot application starting...");
         initializeBotResponses();
         new Thread(Main::startServer).start();
 
-        // Adding a small delay to ensure the server starts before the client tries to connect.
         try {
             Thread.sleep(1000);
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            LOGGER.log(Level.WARNING, "Interrupted while waiting for server to start", e);
         }
 
         new Thread(Main::startClient).start();
@@ -38,30 +51,36 @@ public class Main {
     }
 
     public static void startServer() {
-        System.out.println("Chat server started...");
+        LOGGER.info("Chat server started on port " + PORT);
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             while (true) {
-                new ClientHandler(serverSocket.accept()).start();
+                Socket clientSocket = serverSocket.accept();
+                LOGGER.info("New client connected: " + clientSocket.getInetAddress());
+                new ClientHandler(clientSocket).start();
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Error in server socket", e);
         }
     }
 
     public static void startClient() {
+        LOGGER.info("Starting client...");
         try (Socket socket = new Socket("localhost", PORT);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
              PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
              BufferedReader consoleInput = new BufferedReader(new InputStreamReader(System.in))) {
+
+            LOGGER.info("Client connected to server");
 
             Thread listener = new Thread(() -> {
                 try {
                     String message;
                     while ((message = in.readLine()) != null) {
                         System.out.println(message);
+                        LOGGER.info("Received message: " + message);
                     }
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    LOGGER.log(Level.WARNING, "Error in client listener", e);
                 }
             });
 
@@ -70,13 +89,15 @@ public class Main {
             String userInput;
             while ((userInput = consoleInput.readLine()) != null) {
                 out.println(userInput);
+                LOGGER.info("Sent message: " + userInput);
                 String response = getBotResponse(userInput);
                 if (response != null) {
-                    System.out.println("Bot: " + response); // Only print the bot's response on the client side
+                    System.out.println("Bot: " + response);
+                    LOGGER.info("Bot response: " + response);
                 }
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Error in client", e);
         }
     }
 
@@ -103,21 +124,24 @@ public class Main {
                 }
                 String message;
                 while ((message = in.readLine()) != null) {
+                    LOGGER.info("Received message from client: " + message);
                     synchronized (clientWriters) {
                         for (PrintWriter writer : clientWriters) {
-                            if (writer != out) { // Avoid sending the message back to the sender
+                            if (writer != out) {
                                 writer.println(message);
+                                LOGGER.info("Forwarded message to other client");
                             }
                         }
                     }
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                LOGGER.log(Level.WARNING, "Error in client handler", e);
             } finally {
                 try {
                     socket.close();
+                    LOGGER.info("Client disconnected: " + socket.getInetAddress());
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    LOGGER.log(Level.WARNING, "Error closing client socket", e);
                 }
                 synchronized (clientWriters) {
                     clientWriters.remove(out);
